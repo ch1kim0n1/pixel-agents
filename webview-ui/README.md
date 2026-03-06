@@ -1,73 +1,107 @@
-# React + TypeScript + Vite
+# @pixel-agents/council-room
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Reusable React council-room package for Pixel Agents hosts.
 
-Currently, two official plugins are available:
+Default renderer branding:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- `CometRoom`
+- `AI Agents that will think and give the best answer to the user`
 
-## React Compiler
+## Exports
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- `PixelCouncilRoom`
+- `preloadCouncilRoomAssets`
+- `connectCouncilRoomWebSocket`
+- `createMockCouncilConnection`
+- `parseCouncilEvent` / `parseLegacyCouncilEvent`
+- `runtimeEventToUiMessages`
 
-## Expanding the ESLint configuration
+## Install (workspace)
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+From monorepo root:
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run bootstrap
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Build
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+```bash
+npm run build
+npm run build:lib
+```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Library bundle output:
+
+- `../dist/library/pixel-agents-council.es.js`
+- `../dist/library/pixel-agents-council.umd.js`
+
+## Embed Example
+
+```tsx
+import { PixelCouncilRoom, connectCouncilRoomWebSocket } from '@pixel-agents/council-room'
+
+const connection = connectCouncilRoomWebSocket({
+  url: 'ws://localhost:8001/v1/council-room/ws',
+  token: process.env.VITE_COUNCIL_TOKEN,
+  runOnConnectContent: 'Evaluate our launch plan',
+})
+
+export function App() {
+  return <PixelCouncilRoom connection={connection} assetBaseUrl="/assets" />
+}
+```
+
+`PixelCouncilRoom` now auto-loads council assets from `<assetBaseUrl>`:
+
+- `furniture/furniture-catalog.json` + referenced PNGs (builds dynamic catalog)
+- `characters/char_0.png ... char_5.png` (loads pre-colored member sprites)
+
+If those files are missing, it falls back to built-in furniture and character templates.
+
+## Asset Pipeline
+
+Raw drops belong under monorepo `asset-drop/`.
+
+Process dropped packs into runtime assets:
+
+```bash
+python scripts/process-dropped-council-assets.py
+```
+
+This writes synced outputs to both hosts:
+
+- `webview-ui/public/assets/{characters,furniture}`
+- `apps/pixel-agents-electron/public/assets/{characters,furniture}`
+- `webview-ui/public/assets/fonts`
+- `apps/pixel-agents-electron/public/assets/fonts`
+
+It now imports both:
+
+- single PNG furniture (`jik-a-4` office pack)
+- `*-Sheet.png` sprite sheets from `asset-drop/furniture-pack/raw/Interior/**` (auto-sliced into selectable furniture assets)
+
+Run/cancel messages:
+
+```json
+{ "type": "run", "runId": "optional-id", "content": "Your prompt" }
+```
+
+```json
+{ "type": "cancel", "runId": "optional-id" }
+```
+
+## Host Bridge
+
+UI host messaging resolves via `@pixel-agents/host-bridge`:
+
+- `vscode`: uses `acquireVsCodeApi()`
+- `electron`: uses `window.pixelAgentsHost`
+- `browser`: safe no-op sender + window listener
+
+## Dev Demo
+
+```text
+http://localhost:5173/?mode=council
+http://localhost:5173/?mode=council&councilWs=ws://localhost:8001/v1/council-room/ws
 ```

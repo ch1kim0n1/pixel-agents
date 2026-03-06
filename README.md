@@ -1,133 +1,145 @@
 # Pixel Agents
 
-A VS Code extension that turns your AI coding agents into animated pixel art characters in a virtual office.
+Council-native Pixel Agents monorepo for hackathon delivery.
 
-Each Claude Code terminal you open spawns a character that walks around, sits at desks, and visually reflects what the agent is doing — typing when writing code, reading when searching files, waiting when it needs your attention.
+Current primary product surface:
 
-This is the source code for the free [Pixel Agents extension for VS Code](https://marketplace.visualstudio.com/items?itemName=pablodelucca.pixel-agents) — you can install it directly from the marketplace with the full furniture catalog included.
+- **CometRoom**: executive war-room council UI with Pixel Agents + runtime panel.
 
+This repo now ships three production surfaces:
 
-![Pixel Agents screenshot](webview-ui/public/Screenshot.jpg)
+- `@pixel-agents/runtime-core`: host-agnostic runtime (agent lifecycle, council-to-agent state mapping, persistence hooks)
+- `@pixel-agents/council-room`: reusable React council-room renderer + websocket connector + runtime UI adapter
+- `apps/pixel-agents-electron`: standalone Electron host with terminal + transcript integration
 
-## Features
-
-- **One agent, one character** — every Claude Code terminal gets its own animated character
-- **Live activity tracking** — characters animate based on what the agent is actually doing (writing, reading, running commands)
-- **Office layout editor** — design your office with floors, walls, and furniture using a built-in editor
-- **Speech bubbles** — visual indicators when an agent is waiting for input or needs permission
-- **Sound notifications** — optional chime when an agent finishes its turn
-- **Sub-agent visualization** — Task tool sub-agents spawn as separate characters linked to their parent
-- **Persistent layouts** — your office design is saved and shared across VS Code windows
-- **Diverse characters** — 6 diverse characters. These are based on the amazing work of [JIK-A-4, Metro City](https://jik-a-4.itch.io/metrocity-free-topdown-character-pack).
-
-<p align="center">
-  <img src="webview-ui/public/characters.png" alt="Pixel Agents characters" width="320" height="72" style="image-rendering: pixelated;">
-</p>
+The VS Code extension code under `src/` is treated as a legacy adapter until parity signoff is complete.
 
 ## Requirements
 
-- VS Code 1.109.0 or later
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and configured
+- Node `>=22.12.0`
+- npm `>=10.9.0`
+- Claude CLI on the host machine when using terminal spawning
 
-## Getting Started
-
-If you just want to use Pixel Agents, the easiest way is to download the [VS Code extension](https://marketplace.visualstudio.com/items?itemName=pablodelucca.pixel-agents). If you want to play with the code, develop, or contribute, then:
-
-### Install from source
+## Quick Start
 
 ```bash
 git clone https://github.com/pablodelucca/pixel-agents.git
 cd pixel-agents
-npm install
-cd webview-ui && npm install && cd ..
-npm run build
+npm run bootstrap
+npm run ci
 ```
 
-Then press **F5** in VS Code to launch the Extension Development Host.
-
-### Usage
-
-1. Open the **Pixel Agents** panel (it appears in the bottom panel area alongside your terminal)
-2. Click **+ Agent** to spawn a new Claude Code terminal and its character
-3. Start coding with Claude — watch the character react in real time
-4. Click a character to select it, then click a seat to reassign it
-5. Click **Layout** to open the office editor and customize your space
-
-## Layout Editor
-
-The built-in editor lets you design your office:
-
-- **Floor** — Full HSB color control
-- **Walls** — Auto-tiling walls with color customization
-- **Tools** — Select, paint, erase, place, eyedropper, pick
-- **Undo/Redo** — 50 levels with Ctrl+Z / Ctrl+Y
-- **Export/Import** — Share layouts as JSON files via the Settings modal
-
-The grid is expandable up to 64×64 tiles. Click the ghost border outside the current grid to grow it.
-
-### Office Assets
-
-The office tileset used in this project and available via the extension is **[Office Interior Tileset (16x16)](https://donarg.itch.io/officetileset)** by **Donarg**, available on itch.io for **$2 USD**.
-
-This is the only part of the project that is not freely available. The tileset is not included in this repository due to its license. To use Pixel Agents locally with the full set of office furniture and decorations, purchase the tileset and run the asset import pipeline:
+Run CometRoom (one command):
 
 ```bash
-npm run import-tileset
+npm run cometroom
 ```
 
-Fair warning: the import pipeline is not exactly straightforward — the out-of-the-box tileset assets aren't the easiest to work with, and while I've done my best to make the process as smooth as possible, it may require some manual tweaking. If you have experience creating pixel art office assets and would like to contribute freely usable tilesets for the community, that would be hugely appreciated.
+This script processes dropped assets and launches the Electron host.
 
-The extension will still work without the tileset — you'll get the default characters and basic layout, but the full furniture catalog requires the imported assets.
+Inside CometRoom, use the `Reasoning Mode` control before `Start Run` to choose
+how deeply the council should deliberate for that run:
 
-## How It Works
+- `Off`
+- `Light`
+- `Balanced`
+- `Deep`
 
-Pixel Agents watches Claude Code's JSONL transcript files to track what each agent is doing. When an agent uses a tool (like writing a file or running a command), the extension detects it and updates the character's animation accordingly. No modifications to Claude Code are needed — it's purely observational.
+This forwards the selected setting to the council backend as a per-run override.
+It does not render or store raw chain-of-thought.
 
-The webview runs a lightweight game loop with canvas rendering, BFS pathfinding, and a character state machine (idle → walk → type/read). Everything is pixel-perfect at integer zoom levels.
+Run the deterministic cross-repo scenario check:
 
-## Tech Stack
+```bash
+npm run scenario:check
+```
 
-- **Extension**: TypeScript, VS Code Webview API, esbuild
-- **Webview**: React 19, TypeScript, Vite, Canvas 2D
+This starts a local `hackai26-pre-code` council-room backend with deterministic
+stage outputs, captures a live websocket run, and replays the emitted events
+through `@pixel-agents/runtime-core` so you can verify the integration contract
+without depending on external model providers.
 
-## Known Limitations
+Fast path when assets are already processed:
 
-- **Agent-terminal sync** — the way agents are connected to Claude Code terminal instances is not super robust and sometimes desyncs, especially when terminals are rapidly opened/closed or restored across sessions.
-- **Heuristic-based status detection** — Claude Code's JSONL transcript format does not provide clear signals for when an agent is waiting for user input or when it has finished its turn. The current detection is based on heuristics (idle timers, turn-duration events) and often misfires — agents may briefly show the wrong status or miss transitions.
-- **Windows-only testing** — the extension has only been tested on Windows 11. It may work on macOS or Linux, but there could be unexpected issues with file watching, paths, or terminal behavior on those platforms.
+```bash
+npm run dev:electron
+```
 
-## Roadmap
+Build council-room library bundle:
 
-There are several areas where contributions would be very welcome:
+```bash
+npm run build:council-room
+```
 
-- **Improve agent-terminal reliability** — more robust connection and sync between characters and Claude Code instances
-- **Better status detection** — find or propose clearer signals for agent state transitions (waiting, done, permission needed)
-- **Community assets** — freely usable pixel art tilesets or characters that anyone can use without purchasing third-party assets
-- **Agent creation and definition** — define agents with custom skills, system prompts, names, and skins before launching them
-- **Desks as directories** — click on a desk to select a working directory, drag and drop agents or click-to-assign to move them to specific desks/projects
-- **Claude Code agent teams** — native support for [agent teams](https://code.claude.com/docs/en/agent-teams), visualizing multi-agent coordination and communication
-- **Git worktree support** — agents working in different worktrees to avoid conflict from parallel work on the same files
-- **Support for other agentic frameworks** — [OpenCode](https://github.com/nichochar/opencode), or really any kind of agentic experiment you'd want to run inside a pixel art interface (see [simile.ai](https://simile.ai/) for inspiration)
+Process dropped art packs into council/electron runtime assets:
 
-If any of these interest you, feel free to open an issue or submit a PR.
+```bash
+python scripts/process-dropped-council-assets.py
+```
 
-## Contributions
+The processor ingests direct PNG furniture and auto-slices `*-Sheet.png` interior packs into individual furniture assets.
+It also syncs the pixel UI font to both runtime asset roots.
 
-See [CONTRIBUTORS.md](CONTRIBUTORS.md) for instructions on how to contribute to this project.
+## Workspace Layout
 
-Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
+```text
+packages/
+  host-bridge/      # VS Code/Electron/browser host message bridge
+  runtime-core/     # RuntimeCore + CouncilBridge contracts
+webview-ui/         # @pixel-agents/council-room library + demo UI
+apps/
+  pixel-agents-electron/  # Standalone Electron host adapter
+src/                # Legacy VS Code adapter (decommission target)
+```
 
-## Supporting the Project
+Processed council assets are synced to:
 
-If you find Pixel Agents useful, consider supporting its development:
+- `webview-ui/public/assets`
+- `apps/pixel-agents-electron/public/assets`
 
-<a href="https://github.com/sponsors/pablodelucca">
-  <img src="https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github" alt="GitHub Sponsors">
-</a>
-<a href="https://ko-fi.com/pablodelucca">
-  <img src="https://img.shields.io/badge/Support-Ko--fi-ff5e5b?logo=ko-fi" alt="Ko-fi">
-</a>
+## Public Contracts
 
-## License
+- `HostAdapter`: terminal create/focus/close, layout persistence, host event subscription, optional external open
+- `RuntimeCore`: `createRuntime`, `start`, `stop`, `dispatchHostEvent`, `dispatchCouncilEvent`, `subscribeRuntimeEvents`
+- `CouncilBridge`: `connect`, `disconnect`, `run(prompt, runId?, options?)`, `cancel(runId?)`, diagnostics subscription
+- Electron preload API:
+  - `window.pixelAgentsHost.postMessage(message)`
+  - `window.pixelAgentsHost.onMessage(listener)`
 
-This project is licensed under the [MIT License](LICENSE).
+## Council WebSocket Compatibility
+
+Default stream target:
+
+```text
+ws://localhost:8001/v1/council-room/ws
+```
+
+Backwards compatibility guarantees in the companion API (`hackai26-pre-code`):
+
+- Existing `run` messages remain valid
+- Optional `cancel` message is supported
+- Optional `reasoningEffort` is supported on `run`
+- Emitted events include optional `runId` and monotonic `sequence`
+
+## Quality Gates
+
+`npm run ci` executes workspace gates:
+
+1. `typecheck`
+2. `lint`
+3. `test`
+4. `build`
+
+GitHub Actions workflow: `.github/workflows/ci.yml`.
+
+## Parity and Decommission
+
+- Baseline parity checklist: [`docs/parity-checklist.md`](docs/parity-checklist.md)
+- Migration guide: [`docs/migration-vscode-to-electron.md`](docs/migration-vscode-to-electron.md)
+
+Decommission policy is `parity then remove`: VS Code adapter is removed only after parity checklist is signed off for Electron + embedded library usage.
+
+## Security
+
+- Do not commit API keys.
+- Inject secrets through environment variables in local/dev/CI.

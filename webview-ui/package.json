@@ -1,15 +1,33 @@
 {
-  "name": "webview-ui",
-  "private": true,
-  "version": "0.0.0",
+  "name": "@pixel-agents/council-room",
+  "private": false,
+  "version": "0.1.0",
   "type": "module",
+  "main": "./dist/library/pixel-agents-council.umd.js",
+  "module": "./dist/library/pixel-agents-council.es.js",
+  "types": "./src/lib/index.ts",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/lib/index.ts",
+      "import": "./src/lib/index.ts"
+    }
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:lib": "tsc -p tsconfig.lib.json && vite build --config vite.lib.config.ts",
+    "typecheck": "tsc -b --pretty false",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@iconify-json/pixelarticons": "^1.2.4",
+    "@iconify/react": "^6.0.2",
+    "@pixel-agents/host-bridge": "0.1.0",
+    "@pixel-agents/runtime-core": "0.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

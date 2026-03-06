@@ -7,7 +7,7 @@ import { buildDynamicCatalog } from '../office/layout/furnitureCatalog.js'
 import { setFloorSprites } from '../office/floorTiles.js'
 import { setWallSprites } from '../office/wallTiles.js'
 import { setCharacterTemplates } from '../office/sprites/spriteData.js'
-import { vscode } from '../vscodeApi.js'
+import { hostBridge, vscode } from '../vscodeApi.js'
 import { playDoneSound, setSoundEnabled } from '../notificationSound.js'
 
 export interface SubagentCharacter {
@@ -83,8 +83,8 @@ export function useExtensionMessages(
     // Buffer agents from existingAgents until layout is loaded
     let pendingAgents: Array<{ id: number; palette?: number; hueShift?: number; seatId?: string; folderName?: string }> = []
 
-    const handler = (e: MessageEvent) => {
-      const msg = e.data
+    const handler = (raw: unknown) => {
+      const msg = (raw ?? {}) as { type?: string; [key: string]: unknown }
       const os = getOfficeState()
 
       if (msg.type === 'layoutLoaded') {
@@ -355,10 +355,10 @@ export function useExtensionMessages(
         }
       }
     }
-    window.addEventListener('message', handler)
+    const removeHostListener = hostBridge.addMessageListener(handler)
     vscode.postMessage({ type: 'webviewReady' })
-    return () => window.removeEventListener('message', handler)
-  }, [getOfficeState])
+    return removeHostListener
+  }, [getOfficeState, isEditDirty, onLayoutLoaded])
 
   return { agents, selectedAgent, agentTools, agentStatuses, subagentTools, subagentCharacters, layoutReady, loadedAssets, workspaceFolders }
 }
