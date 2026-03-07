@@ -7,6 +7,12 @@ import {
   DISMISS_BUBBLE_FAST_FADE_SEC,
   INACTIVE_SEAT_TIMER_MIN_SEC,
   INACTIVE_SEAT_TIMER_RANGE_SEC,
+  SOCIAL_GLANCE_MIN_SEC,
+  SOCIAL_GLANCE_MAX_SEC,
+  SOCIAL_GLANCE_DURATION_MIN_SEC,
+  SOCIAL_GLANCE_DURATION_MAX_SEC,
+  SOCIAL_NEARBY_RADIUS_TILES,
+  SOCIAL_BUBBLE_RADIUS_TILES,
   AUTO_ON_FACING_DEPTH,
   AUTO_ON_SIDE_DEPTH,
   CHARACTER_SITTING_OFFSET_PX,
@@ -14,7 +20,7 @@ import {
   CHARACTER_HIT_HEIGHT,
 } from '../../constants.js'
 import type { Character, Seat, FurnitureInstance, TileType as TileTypeVal, OfficeLayout, PlacedFurniture } from '../types.js'
-import { createCharacter, updateCharacter } from './characters.js'
+import { createCharacter, resetCharacterWorkPose, triggerCharacterAttention, updateCharacter } from './characters.js'
 import { matrixEffectSeeds } from './matrixEffect.js'
 import { isWalkable, getWalkableTiles, findPath } from '../layout/tileMap.js'
 import {
@@ -166,6 +172,76 @@ export class OfficeState {
     return null
   }
 
+  private randomRange(min: number, max: number): number {
+    return min + Math.random() * (max - min)
+  }
+
+  private directionToward(from: Character, to: Character): Direction {
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return dx >= 0 ? Direction.RIGHT : Direction.LEFT
+    }
+    return dy >= 0 ? Direction.DOWN : Direction.UP
+  }
+
+  private cueNearbyAttention(sourceId: number): void {
+    const source = this.characters.get(sourceId)
+    if (!source || source.matrixEffect) return
+    for (const ch of this.characters.values()) {
+      if (ch.id === sourceId || ch.matrixEffect || ch.state === CharacterState.WALK) continue
+      const distance = Math.abs(ch.tileCol - source.tileCol) + Math.abs(ch.tileRow - source.tileRow)
+      if (distance === 0 || distance > SOCIAL_BUBBLE_RADIUS_TILES) continue
+      if (Math.random() > 0.7) continue
+      triggerCharacterAttention(
+        ch,
+        this.directionToward(ch, source),
+        this.randomRange(SOCIAL_GLANCE_DURATION_MIN_SEC, SOCIAL_GLANCE_DURATION_MAX_SEC),
+      )
+      ch.socialCooldown = this.randomRange(SOCIAL_GLANCE_MIN_SEC, SOCIAL_GLANCE_MAX_SEC)
+    }
+  }
+
+  private updateSocialBeat(ch: Character, dt: number): void {
+    if (ch.matrixEffect || ch.state === CharacterState.WALK) return
+    ch.socialCooldown = Math.max(0, ch.socialCooldown - dt)
+    if (ch.socialCooldown > 0 || ch.attentionTimer > 0) return
+
+    let bestTarget: Character | null = null
+    let bestScore = -Infinity
+
+    for (const other of this.characters.values()) {
+      if (other.id === ch.id || other.matrixEffect) continue
+      const distance = Math.abs(other.tileCol - ch.tileCol) + Math.abs(other.tileRow - ch.tileRow)
+      const radius = other.bubbleType ? SOCIAL_BUBBLE_RADIUS_TILES : SOCIAL_NEARBY_RADIUS_TILES
+      if (distance === 0 || distance > radius) continue
+
+      let score = -distance
+      if (other.bubbleType) score += 5
+      if (other.state === CharacterState.WALK) score += 2
+      if (other.isActive !== ch.isActive) score += 1.5
+      if (this.selectedAgentId === other.id) score += 3
+      if (this.hoveredAgentId === other.id) score += 1
+
+      if (score > bestScore) {
+        bestScore = score
+        bestTarget = other
+      }
+    }
+
+    if (!bestTarget || bestScore < 0) {
+      ch.socialCooldown = this.randomRange(SOCIAL_GLANCE_MIN_SEC, SOCIAL_GLANCE_MAX_SEC)
+      return
+    }
+
+    triggerCharacterAttention(
+      ch,
+      this.directionToward(ch, bestTarget),
+      this.randomRange(SOCIAL_GLANCE_DURATION_MIN_SEC, SOCIAL_GLANCE_DURATION_MAX_SEC),
+    )
+    ch.socialCooldown = this.randomRange(SOCIAL_GLANCE_MIN_SEC, SOCIAL_GLANCE_MAX_SEC)
+  }
+
   /**
    * Pick a diverse palette for a new agent based on currently active agents.
    * First 6 agents each get a unique skin (random order). Beyond 6, skins
@@ -298,6 +374,8 @@ export class OfficeState {
       ch.state = CharacterState.WALK
       ch.frame = 0
       ch.frameTimer = 0
+      ch.attentionDir = null
+      ch.attentionTimer = 0
     } else {
       // Already at seat or no path — sit down
       ch.state = CharacterState.TYPE
@@ -326,6 +404,8 @@ export class OfficeState {
       ch.state = CharacterState.WALK
       ch.frame = 0
       ch.frameTimer = 0
+      ch.attentionDir = null
+      ch.attentionTimer = 0
     } else {
       // Already at seat — sit down
       ch.state = CharacterState.TYPE
@@ -357,6 +437,8 @@ export class OfficeState {
     ch.holdPosition = true
     ch.frame = 0
     ch.frameTimer = 0
+    ch.attentionDir = null
+    ch.attentionTimer = 0
     return true
   }
 
@@ -501,6 +583,9 @@ export class OfficeState {
     const ch = this.characters.get(id)
     if (ch) {
       ch.isActive = active
+      if (ch.state === CharacterState.TYPE) {
+        resetCharacterWorkPose(ch)
+      }
       if (!active) {
         // Sentinel -1: signals turn just ended, skip next seat rest timer.
         // Prevents the WALK handler from setting a 2-4 min rest on arrival.
@@ -508,6 +593,8 @@ export class OfficeState {
         ch.path = []
         ch.moveProgress = 0
         ch.holdPosition = false
+      } else {
+        this.cueNearbyAttention(id)
       }
       this.rebuildFurnitureInstances()
     }
@@ -577,6 +664,9 @@ export class OfficeState {
     const ch = this.characters.get(id)
     if (ch) {
       ch.currentTool = tool
+      if (ch.state === CharacterState.TYPE) {
+        resetCharacterWorkPose(ch)
+      }
     }
   }
 
@@ -585,6 +675,7 @@ export class OfficeState {
     if (ch) {
       ch.bubbleType = 'permission'
       ch.bubbleTimer = 0
+      this.cueNearbyAttention(id)
     }
   }
 
@@ -601,6 +692,7 @@ export class OfficeState {
     if (ch) {
       ch.bubbleType = 'waiting'
       ch.bubbleTimer = WAITING_BUBBLE_DURATION_SEC
+      this.cueNearbyAttention(id)
     }
   }
 
@@ -650,6 +742,8 @@ export class OfficeState {
           ch.bubbleTimer = 0
         }
       }
+
+      this.updateSocialBeat(ch, dt)
     }
     // Remove characters that finished despawn
     for (const id of toDelete) {

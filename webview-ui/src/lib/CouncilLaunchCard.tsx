@@ -43,16 +43,23 @@ export function CouncilLaunchCard({
         <h2>{title}</h2>
         <p>{description}</p>
       </div>
+      <div className="council-query-entry">
+        <div className="council-query-entry-head">
+          <span className="council-query-entry-kicker">Primary Input</span>
+          <strong>Send The Council Query</strong>
+          <p>This message is sent to the AI council and becomes the starting point for the debate session.</p>
+        </div>
+        <label className="council-field council-query-field">
+          <span>{promptLabel}</span>
+          <textarea
+            value={promptValue}
+            onChange={(event) => onPromptChange(event.target.value)}
+            placeholder={promptPlaceholder}
+          />
+        </label>
+        <p className="council-helper-text">{helperText}</p>
+      </div>
       {topSlot}
-      <label className="council-field">
-        <span>{promptLabel}</span>
-        <textarea
-          value={promptValue}
-          onChange={(event) => onPromptChange(event.target.value)}
-          placeholder={promptPlaceholder}
-        />
-      </label>
-      <p className="council-helper-text">{helperText}</p>
       <div className="council-action-row">
         <button
           type="button"

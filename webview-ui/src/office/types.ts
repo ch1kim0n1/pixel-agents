@@ -41,6 +41,13 @@ export const CharacterState = {
 } as const
 export type CharacterState = (typeof CharacterState)[keyof typeof CharacterState]
 
+export const CharacterWorkPose = {
+  TYPING: 'typing',
+  READING: 'reading',
+  THINKING: 'thinking',
+} as const
+export type CharacterWorkPose = (typeof CharacterWorkPose)[keyof typeof CharacterWorkPose]
+
 export const Direction = {
   DOWN: 0,
   LEFT: 1,
@@ -167,6 +174,8 @@ export interface Character {
   frame: number
   /** Time accumulator for animation */
   frameTimer: number
+  /** Timer used for subtle breathing/secondary motion loops */
+  idleTimer: number
   /** Timer for idle wander decisions */
   wanderTimer: number
   /** Number of wander moves completed in current roaming cycle */
@@ -185,6 +194,18 @@ export interface Character {
   bubbleTimer: number
   /** Timer to stay seated while inactive after seat reassignment (counts down to 0) */
   seatTimer: number
+  /** Brief temporary look override used for social glances */
+  attentionDir: Direction | null
+  /** Countdown for the temporary look override */
+  attentionTimer: number
+  /** Delay before another glance/social reaction can occur */
+  socialCooldown: number
+  /** Current seated work pose: typing, reading, or thinking */
+  workPose: CharacterWorkPose
+  /** Time spent in the current seated work pose */
+  workPoseTimer: number
+  /** Duration before picking the next seated work pose */
+  workPoseDuration: number
   /** Whether this character represents a sub-agent (spawned by Task tool) */
   isSubagent: boolean
   /** Parent agent ID if this is a sub-agent, null otherwise */

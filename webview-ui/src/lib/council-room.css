@@ -1,4 +1,14 @@
 @font-face {
+  font-family: 'Mojangles';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    local('Mojangles'),
+    local('Mojangles Regular');
+}
+
+@font-face {
   font-family: 'FS Pixel Sans';
   font-style: normal;
   font-weight: 400;
@@ -337,7 +347,7 @@
   padding: 0 0 0 16px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  font-family: 'Mojangles', 'FS Pixel Sans', 'Courier New', monospace;
   max-height: 200px;
   overflow: auto;
 }
