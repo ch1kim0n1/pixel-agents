@@ -41,6 +41,71 @@ export interface CouncilOptionRanking {
   firstChoiceVotes?: number
 }
 
+export interface CouncilMissionBrief {
+  objective: string
+  successMetrics: string[]
+  constraints: string[]
+  decisionWindow: string
+  riskPosture: string
+  missingInfo: string[]
+}
+
+export interface CouncilDecisionLedger {
+  headline: string
+  recommendation: string
+  whyNow: string
+  owner: string
+  horizon: string
+  killCriteria: string[]
+}
+
+export interface CouncilOptionScorecardEntry {
+  optionId: string
+  label: string
+  title: string
+  summary: string
+  impact: number
+  feasibility: number
+  risk: number
+  confidence: number
+  bestFor: string
+  watchouts: string[]
+}
+
+export interface CouncilDissentEntry {
+  memberId: string
+  displayName: string
+  personaName?: string
+  stance: string
+  objection: string
+  whatChangesMind: string
+  confidence: number
+}
+
+export interface CouncilRedTeamReport {
+  failureMode: string
+  triggerSignals: string[]
+  mitigations: string[]
+}
+
+export interface CouncilActionPlanEntry {
+  title: string
+  owner: string
+  timeframe: string
+  successMetric: string
+  dependencies: string[]
+}
+
+export interface CouncilStrategyPacket {
+  missionBrief: CouncilMissionBrief
+  decisionLedger: CouncilDecisionLedger
+  optionScorecard: CouncilOptionScorecardEntry[]
+  dissentBoard: CouncilDissentEntry[]
+  redTeamReport: CouncilRedTeamReport
+  actionPlan: CouncilActionPlanEntry[]
+  judgeNarrative: string[]
+}
+
 export interface CouncilMemberDescriptor {
   id: string
   displayName: string
@@ -69,11 +134,15 @@ export interface CouncilSessionStartedEvent extends BaseCouncilEvent {
 export interface CouncilStageStartedEvent extends BaseCouncilEvent {
   type: 'stage.started'
   stage: CouncilStage
+  summary?: string
+  artifact?: Record<string, unknown>
 }
 
 export interface CouncilStageCompletedEvent extends BaseCouncilEvent {
   type: 'stage.completed'
   stage: CouncilStage
+  summary?: string
+  artifact?: Record<string, unknown>
 }
 
 export interface CouncilMemberStartedEvent extends BaseCouncilEvent {
@@ -105,6 +174,22 @@ export interface CouncilMemberErrorEvent extends BaseCouncilEvent {
   message: string
 }
 
+export type CouncilChatRole = 'user' | 'assistant' | 'system'
+
+export interface CouncilMemberChatMessageEvent extends BaseCouncilEvent {
+  type: 'member.chat.message'
+  memberId: string
+  role: CouncilChatRole
+  content: string
+  messageId?: string
+}
+
+export interface CouncilMemberChatErrorEvent extends BaseCouncilEvent {
+  type: 'member.chat.error'
+  memberId: string
+  message: string
+}
+
 export interface CouncilSessionCompletedEvent extends BaseCouncilEvent {
   type: 'session.completed'
   summary?: string
@@ -113,6 +198,7 @@ export interface CouncilSessionCompletedEvent extends BaseCouncilEvent {
   options?: CouncilAnswerChoice[]
   references?: CouncilReference[]
   optionRankings?: CouncilOptionRanking[]
+  strategyPacket?: CouncilStrategyPacket
 }
 
 export interface CouncilSessionFailedEvent extends BaseCouncilEvent {
@@ -132,6 +218,8 @@ export type CouncilEvent =
   | CouncilMemberCompletedEvent
   | CouncilMemberWaitingEvent
   | CouncilMemberErrorEvent
+  | CouncilMemberChatMessageEvent
+  | CouncilMemberChatErrorEvent
   | CouncilSessionCompletedEvent
   | CouncilSessionFailedEvent
   | CouncilHeartbeatEvent
@@ -147,6 +235,112 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object'
     ? (value as Record<string, unknown>)
     : null
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter(Boolean)
+}
+
+function parseStrategyPacket(value: unknown): CouncilStrategyPacket | null {
+  const packet = asRecord(value)
+  if (!packet) return null
+
+  const missionBriefRaw = asRecord(packet.missionBrief)
+  const decisionLedgerRaw = asRecord(packet.decisionLedger)
+  const redTeamRaw = asRecord(packet.redTeamReport)
+  if (!missionBriefRaw || !decisionLedgerRaw || !redTeamRaw) return null
+
+  const optionScorecard = Array.isArray(packet.optionScorecard)
+    ? packet.optionScorecard
+      .map((entry): CouncilOptionScorecardEntry | null => {
+        const item = asRecord(entry)
+        if (!item) return null
+        if (
+          typeof item.optionId !== 'string'
+          || typeof item.label !== 'string'
+          || typeof item.title !== 'string'
+        ) return null
+        return {
+          optionId: item.optionId,
+          label: item.label,
+          title: item.title,
+          summary: typeof item.summary === 'string' ? item.summary : '',
+          impact: typeof item.impact === 'number' ? item.impact : 0,
+          feasibility: typeof item.feasibility === 'number' ? item.feasibility : 0,
+          risk: typeof item.risk === 'number' ? item.risk : 0,
+          confidence: typeof item.confidence === 'number' ? item.confidence : 0,
+          bestFor: typeof item.bestFor === 'string' ? item.bestFor : '',
+          watchouts: asStringArray(item.watchouts),
+        }
+      })
+      .filter((entry): entry is CouncilOptionScorecardEntry => entry !== null)
+    : []
+
+  const dissentBoard = Array.isArray(packet.dissentBoard)
+    ? packet.dissentBoard
+      .map((entry): CouncilDissentEntry | null => {
+        const item = asRecord(entry)
+        if (!item) return null
+        if (typeof item.memberId !== 'string' || typeof item.displayName !== 'string') return null
+        return {
+          memberId: item.memberId,
+          displayName: item.displayName,
+          personaName: typeof item.personaName === 'string' ? item.personaName : undefined,
+          stance: typeof item.stance === 'string' ? item.stance : '',
+          objection: typeof item.objection === 'string' ? item.objection : '',
+          whatChangesMind: typeof item.whatChangesMind === 'string' ? item.whatChangesMind : '',
+          confidence: typeof item.confidence === 'number' ? item.confidence : 0,
+        }
+      })
+      .filter((entry): entry is CouncilDissentEntry => entry !== null)
+    : []
+
+  const actionPlan = Array.isArray(packet.actionPlan)
+    ? packet.actionPlan
+      .map((entry): CouncilActionPlanEntry | null => {
+        const item = asRecord(entry)
+        if (!item || typeof item.title !== 'string') return null
+        return {
+          title: item.title,
+          owner: typeof item.owner === 'string' ? item.owner : '',
+          timeframe: typeof item.timeframe === 'string' ? item.timeframe : '',
+          successMetric: typeof item.successMetric === 'string' ? item.successMetric : '',
+          dependencies: asStringArray(item.dependencies),
+        }
+      })
+      .filter((entry): entry is CouncilActionPlanEntry => entry !== null)
+    : []
+
+  return {
+    missionBrief: {
+      objective: typeof missionBriefRaw.objective === 'string' ? missionBriefRaw.objective : '',
+      successMetrics: asStringArray(missionBriefRaw.successMetrics),
+      constraints: asStringArray(missionBriefRaw.constraints),
+      decisionWindow: typeof missionBriefRaw.decisionWindow === 'string' ? missionBriefRaw.decisionWindow : '',
+      riskPosture: typeof missionBriefRaw.riskPosture === 'string' ? missionBriefRaw.riskPosture : '',
+      missingInfo: asStringArray(missionBriefRaw.missingInfo),
+    },
+    decisionLedger: {
+      headline: typeof decisionLedgerRaw.headline === 'string' ? decisionLedgerRaw.headline : '',
+      recommendation: typeof decisionLedgerRaw.recommendation === 'string' ? decisionLedgerRaw.recommendation : '',
+      whyNow: typeof decisionLedgerRaw.whyNow === 'string' ? decisionLedgerRaw.whyNow : '',
+      owner: typeof decisionLedgerRaw.owner === 'string' ? decisionLedgerRaw.owner : '',
+      horizon: typeof decisionLedgerRaw.horizon === 'string' ? decisionLedgerRaw.horizon : '',
+      killCriteria: asStringArray(decisionLedgerRaw.killCriteria),
+    },
+    optionScorecard,
+    dissentBoard,
+    redTeamReport: {
+      failureMode: typeof redTeamRaw.failureMode === 'string' ? redTeamRaw.failureMode : '',
+      triggerSignals: asStringArray(redTeamRaw.triggerSignals),
+      mitigations: asStringArray(redTeamRaw.mitigations),
+    },
+    actionPlan,
+    judgeNarrative: asStringArray(packet.judgeNarrative),
+  }
 }
 
 export function isCouncilStage(value: unknown): value is CouncilStage {
@@ -229,6 +423,8 @@ export function parseCouncilEvent(raw: unknown): CouncilEvent | null {
     return {
       type: typeRaw,
       stage: obj.stage,
+      summary: typeof obj.summary === 'string' ? obj.summary : undefined,
+      artifact: asRecord(obj.artifact) ?? undefined,
       sessionId: typeof obj.sessionId === 'string' ? obj.sessionId : undefined,
       runId: typeof obj.runId === 'string' ? obj.runId : undefined,
       sequence: typeof obj.sequence === 'number' ? obj.sequence : undefined,
@@ -292,6 +488,39 @@ export function parseCouncilEvent(raw: unknown): CouncilEvent | null {
       memberId: obj.memberId,
       stage: obj.stage,
       message: typeof obj.message === 'string' ? obj.message : 'Unknown member error.',
+      sessionId: typeof obj.sessionId === 'string' ? obj.sessionId : undefined,
+      runId: typeof obj.runId === 'string' ? obj.runId : undefined,
+      sequence: typeof obj.sequence === 'number' ? obj.sequence : undefined,
+      ts: typeof obj.ts === 'string' ? obj.ts : undefined,
+    }
+  }
+
+  if (typeRaw === 'member.chat.message') {
+    if (typeof obj.memberId !== 'string' || typeof obj.content !== 'string') return null
+    return {
+      type: 'member.chat.message',
+      memberId: obj.memberId,
+      role:
+        obj.role === 'assistant'
+        || obj.role === 'system'
+        || obj.role === 'user'
+          ? obj.role
+          : 'assistant',
+      content: obj.content,
+      messageId: typeof obj.messageId === 'string' ? obj.messageId : undefined,
+      sessionId: typeof obj.sessionId === 'string' ? obj.sessionId : undefined,
+      runId: typeof obj.runId === 'string' ? obj.runId : undefined,
+      sequence: typeof obj.sequence === 'number' ? obj.sequence : undefined,
+      ts: typeof obj.ts === 'string' ? obj.ts : undefined,
+    }
+  }
+
+  if (typeRaw === 'member.chat.error') {
+    if (typeof obj.memberId !== 'string') return null
+    return {
+      type: 'member.chat.error',
+      memberId: obj.memberId,
+      message: typeof obj.message === 'string' ? obj.message : 'Member chat failed.',
       sessionId: typeof obj.sessionId === 'string' ? obj.sessionId : undefined,
       runId: typeof obj.runId === 'string' ? obj.runId : undefined,
       sequence: typeof obj.sequence === 'number' ? obj.sequence : undefined,
@@ -363,6 +592,7 @@ export function parseCouncilEvent(raw: unknown): CouncilEvent | null {
           .map((entry) => parseOptionRanking(entry))
           .filter((entry): entry is CouncilOptionRanking => entry !== null)
         : undefined,
+      strategyPacket: parseStrategyPacket(obj.strategyPacket) ?? undefined,
       sessionId: typeof obj.sessionId === 'string' ? obj.sessionId : undefined,
       runId: typeof obj.runId === 'string' ? obj.runId : undefined,
       sequence: typeof obj.sequence === 'number' ? obj.sequence : undefined,

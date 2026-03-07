@@ -277,6 +277,7 @@ export class OfficeState {
   reassignSeat(agentId: number, seatId: string): void {
     const ch = this.characters.get(agentId)
     if (!ch) return
+    ch.holdPosition = false
     // Unassign old seat
     if (ch.seatId) {
       const old = this.seats.get(ch.seatId)
@@ -313,6 +314,7 @@ export class OfficeState {
   sendToSeat(agentId: number): void {
     const ch = this.characters.get(agentId)
     if (!ch || !ch.seatId) return
+    ch.holdPosition = false
     const seat = this.seats.get(ch.seatId)
     if (!seat) return
     const path = this.withOwnSeatUnblocked(ch, () =>
@@ -352,6 +354,7 @@ export class OfficeState {
     ch.path = path
     ch.moveProgress = 0
     ch.state = CharacterState.WALK
+    ch.holdPosition = true
     ch.frame = 0
     ch.frameTimer = 0
     return true
@@ -504,6 +507,7 @@ export class OfficeState {
         ch.seatTimer = -1
         ch.path = []
         ch.moveProgress = 0
+        ch.holdPosition = false
       }
       this.rebuildFurnitureInstances()
     }

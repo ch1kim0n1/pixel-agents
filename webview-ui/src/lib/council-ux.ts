@@ -1,8 +1,13 @@
 import type {
+  CouncilActionPlanEntry,
   CouncilAnswerChoice,
+  CouncilDissentEntry,
+  CouncilMissionBrief,
   CouncilMemberRole,
   CouncilOptionRanking,
+  CouncilOptionScorecardEntry,
   CouncilReference,
+  CouncilStrategyPacket,
   CouncilStage,
 } from './council-events.js'
 
@@ -53,6 +58,29 @@ export interface CouncilOutcomeSummary {
   options: CouncilAnswerChoice[]
   references: CouncilReference[]
   optionRankings: CouncilOptionRanking[]
+  strategyPacket: CouncilStrategyPacket | null
+}
+
+export interface CouncilStageTimelineEntry {
+  stage: CouncilStage
+  label: string
+  summary: string
+}
+
+export interface CouncilRunHistoryEntry {
+  runId: string
+  completedAt: string
+  headline: string
+  missionBrief: CouncilMissionBrief | null
+  winningOptionTitle: string
+  judgeNarrative: string[]
+}
+
+export interface CouncilStrategySnapshot {
+  missionBrief: CouncilMissionBrief | null
+  optionScorecard: CouncilOptionScorecardEntry[]
+  dissentBoard: CouncilDissentEntry[]
+  actionPlan: CouncilActionPlanEntry[]
 }
 
 export interface CouncilRosterEntry {

@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type FormEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
@@ -26,9 +27,12 @@ import {
   getCouncilActionBannerCopy,
   type CouncilEvent,
   type CouncilEventConnection,
+  type CouncilMissionBrief,
   type CouncilMemberDescriptor,
   type CouncilOutcomeSummary,
   type CouncilRosterEntry,
+  type CouncilRunHistoryEntry,
+  type CouncilStageTimelineEntry,
   type CouncilUxSessionState,
   type CouncilUxTransportState,
 } from './lib/index.js'
@@ -65,7 +69,23 @@ interface WindowDragState {
   originY: number
 }
 
-const DEFAULT_PROMPT = 'Evaluate our hackathon pitch and propose execution priorities.'
+interface DirectChatMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  ts: string
+}
+
+interface MissionBriefDraft {
+  objective: string
+  successMetric: string
+  decisionWindow: string
+  constraints: string
+  stakeholders: string
+  riskPosture: 'Low' | 'Balanced' | 'Bold'
+}
+
+const DEFAULT_PROMPT = 'Current assets: CometRoom UI, council websocket flow, runtime host adapters, and pixel office renderer.'
 const DEFAULT_WS_URL = (import.meta.env.VITE_COUNCIL_WS_URL || '').trim()
 const COUNCIL_TOKEN = (import.meta.env.VITE_COUNCIL_TOKEN || '').trim()
 const ROOM_ZOOM_OPTIONS = [2.5, 3, 3.5, 4, 4.5, 5] as const
@@ -84,6 +104,15 @@ const DEMO_WINDOW_TITLES: Record<DemoWindowId, string> = {
   outcome: 'Decision Deck',
   roster: 'Council Roster',
   log: 'Mission Log',
+}
+
+const DEFAULT_MISSION_BRIEF: MissionBriefDraft = {
+  objective: 'Turn the product into a visible strategy room instead of a chat-first demo.',
+  successMetric: 'Judges immediately see evidence, dissent, a winning option, and an execution plan.',
+  decisionWindow: 'Hackathon weekend',
+  constraints: 'Keep the current council room stable. Preserve the live demo path. Make the result feel premium, not cluttered.',
+  stakeholders: 'Hackathon judges, demo operator, product lead',
+  riskPosture: 'Balanced',
 }
 
 const WINDOW_DEFAULT_LAYOUT: DemoWindowLayoutMap = {
@@ -128,6 +157,90 @@ function formatRunId(runId: string | null): string {
   if (!runId) return 'No active run'
   if (runId.length <= 18) return runId
   return `${runId.slice(0, 8)}...${runId.slice(-6)}`
+}
+
+function formatChatTimestamp(rawTs: string): string {
+  const parsed = new Date(rawTs)
+  if (Number.isNaN(parsed.valueOf())) return ''
+  return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function splitMissionText(raw: string): string[] {
+  return raw
+    .split(/\n|;/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+}
+
+function summarizeMissionBrief(brief: MissionBriefDraft): CouncilMissionBrief {
+  return {
+    objective: brief.objective.trim(),
+    successMetrics: splitMissionText(brief.successMetric),
+    constraints: splitMissionText(brief.constraints),
+    decisionWindow: brief.decisionWindow.trim(),
+    riskPosture: brief.riskPosture,
+    missingInfo: [],
+  }
+}
+
+function missionBriefMissingFields(brief: MissionBriefDraft): string[] {
+  const missing: string[] = []
+  if (!brief.objective.trim()) missing.push('objective')
+  if (!brief.successMetric.trim()) missing.push('success metric')
+  if (!brief.decisionWindow.trim()) missing.push('decision window')
+  if (!brief.constraints.trim()) missing.push('constraints')
+  return missing
+}
+
+function missionBriefReadiness(brief: MissionBriefDraft): number {
+  const total = 5
+  let completed = 0
+  if (brief.objective.trim()) completed += 1
+  if (brief.successMetric.trim()) completed += 1
+  if (brief.decisionWindow.trim()) completed += 1
+  if (brief.constraints.trim()) completed += 1
+  if (brief.stakeholders.trim()) completed += 1
+  return Math.round((completed / total) * 100)
+}
+
+function buildMissionPrompt(brief: MissionBriefDraft, notes: string): string {
+  const successMetrics = splitMissionText(brief.successMetric)
+  const constraints = splitMissionText(brief.constraints)
+  const stakeholders = splitMissionText(brief.stakeholders)
+  const lines = [
+    `Mission Objective: ${brief.objective.trim()}`,
+    `Decision Window: ${brief.decisionWindow.trim()}`,
+    `Risk Posture: ${brief.riskPosture}`,
+  ]
+  if (successMetrics.length > 0) {
+    lines.push(`Success Metrics:\n- ${successMetrics.join('\n- ')}`)
+  }
+  if (constraints.length > 0) {
+    lines.push(`Constraints:\n- ${constraints.join('\n- ')}`)
+  }
+  if (stakeholders.length > 0) {
+    lines.push(`Stakeholders:\n- ${stakeholders.join('\n- ')}`)
+  }
+  if (notes.trim()) {
+    lines.push(`Context Notes:\n${notes.trim()}`)
+  }
+  lines.push(
+    'Deliver a strategy-room output with disagreement, a winning option, a red-team view, and a 7-day action plan.',
+  )
+  return lines.join('\n\n')
+}
+
+function upsertStageTimeline(
+  entries: CouncilStageTimelineEntry[],
+  nextEntry: CouncilStageTimelineEntry,
+): CouncilStageTimelineEntry[] {
+  const remaining = entries.filter((entry) => entry.stage !== nextEntry.stage)
+  const ordered = [...remaining, nextEntry]
+  ordered.sort(
+    (left, right) =>
+      COUNCIL_STAGE_ORDER.indexOf(left.stage) - COUNCIL_STAGE_ORDER.indexOf(right.stage),
+  )
+  return ordered
 }
 
 function buildConnection(
@@ -251,6 +364,7 @@ export default function CouncilDemoApp() {
     prompt: readPrompt(),
     roomZoom: DEFAULT_ROOM_ZOOM,
   })
+  const [missionBrief, setMissionBrief] = useState<MissionBriefDraft>(DEFAULT_MISSION_BRIEF)
   const [activeConnection, setActiveConnection] = useState<ActiveConnectionState>(
     toActiveConnection({
       wsUrl: readWebSocketUrl(),
@@ -279,12 +393,20 @@ export default function CouncilDemoApp() {
   const [hadWaiting, setHadWaiting] = useState(false)
   const [hadError, setHadError] = useState(false)
   const [wasInterrupted, setWasInterrupted] = useState(false)
+  const [stageTimeline, setStageTimeline] = useState<CouncilStageTimelineEntry[]>([])
+  const [runHistory, setRunHistory] = useState<CouncilRunHistoryEntry[]>([])
   const [windowLayout, setWindowLayout] = useState<DemoWindowLayoutMap>(() =>
     loadWindowLayoutMap(),
   )
+  const [directChatMemberId, setDirectChatMemberId] = useState<string | null>(null)
+  const [directChatDraft, setDirectChatDraft] = useState('')
+  const [directChatByMemberId, setDirectChatByMemberId] = useState<Record<string, DirectChatMessage[]>>({})
+  const [directChatPendingByMemberId, setDirectChatPendingByMemberId] = useState<Record<string, boolean>>({})
 
   const dragStateRef = useRef<WindowDragState | null>(null)
   const zCounterRef = useRef<number>(40)
+  const directChatScrollRef = useRef<HTMLDivElement | null>(null)
+  const missionBriefRef = useRef<MissionBriefDraft>(missionBrief)
 
   const connection = useMemo(
     () =>
@@ -299,6 +421,10 @@ export default function CouncilDemoApp() {
     const maxZ = Object.values(windowLayout).reduce((highest, entry) => Math.max(highest, entry.z), 0)
     zCounterRef.current = Math.max(zCounterRef.current, maxZ)
   }, [windowLayout])
+
+  useEffect(() => {
+    missionBriefRef.current = missionBrief
+  }, [missionBrief])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -413,12 +539,17 @@ export default function CouncilDemoApp() {
         setLatestQuestion(null)
         setLastSummary(null)
         setSessionOutcome(null)
+        setStageTimeline([])
         setMembers(nextMembers)
         setSelectedMemberId(
           nextMembers.find((member) => member.role === 'chairman')?.id
             ?? nextMembers[0]?.id
             ?? null,
         )
+        setDirectChatMemberId(null)
+        setDirectChatDraft('')
+        setDirectChatByMemberId({})
+        setDirectChatPendingByMemberId({})
         setHadWaiting(false)
         setHadError(false)
         setWasInterrupted(false)
@@ -436,6 +567,16 @@ export default function CouncilDemoApp() {
         setCompletedStages((prev) => new Set([...prev, event.stage]))
         setActiveStage((current) => (current === event.stage ? null : current))
         setSessionFeed((prev) => [`${event.stage.replaceAll('_', ' ')} completed.`, ...prev].slice(0, 12))
+        const stageSummary = event.summary?.trim()
+        if (stageSummary) {
+          setStageTimeline((prev) =>
+            upsertStageTimeline(prev, {
+              stage: event.stage,
+              label: event.stage.replaceAll('_', ' '),
+              summary: stageSummary,
+            }),
+          )
+        }
         return
       }
 
@@ -469,6 +610,42 @@ export default function CouncilDemoApp() {
         return
       }
 
+      if (event.type === 'member.chat.message') {
+        setDirectChatByMemberId((prev) => {
+          const existing = prev[event.memberId] ?? []
+          if (event.messageId && existing.some((entry) => entry.id === event.messageId)) {
+            return prev
+          }
+          const nextMessage: DirectChatMessage = {
+            id: event.messageId || `${event.memberId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            role: event.role,
+            content: event.content,
+            ts: event.ts || new Date().toISOString(),
+          }
+          return {
+            ...prev,
+            [event.memberId]: [...existing, nextMessage],
+          }
+        })
+        if (event.role === 'assistant' || event.role === 'system') {
+          setDirectChatPendingByMemberId((prev) => ({
+            ...prev,
+            [event.memberId]: false,
+          }))
+        }
+        return
+      }
+
+      if (event.type === 'member.chat.error') {
+        setDirectChatPendingByMemberId((prev) => ({
+          ...prev,
+          [event.memberId]: false,
+        }))
+        setTransportMessage(event.message)
+        setSessionFeed((prev) => [`Private chat error (${event.memberId}): ${event.message}`, ...prev].slice(0, 12))
+        return
+      }
+
       if (event.type === 'session.completed') {
         setSessionState('completed')
         setActiveStage(null)
@@ -481,7 +658,32 @@ export default function CouncilDemoApp() {
           options: event.options ?? [],
           references: event.references ?? [],
           optionRankings: event.optionRankings ?? [],
+          strategyPacket: event.strategyPacket ?? null,
         })
+        if (event.strategyPacket?.decisionLedger?.headline) {
+          const headline = event.strategyPacket.decisionLedger.headline
+          setStageTimeline((prev) =>
+            upsertStageTimeline(prev, {
+              stage: 'final_synthesis',
+              label: 'final synthesis',
+              summary: headline,
+            }),
+          )
+        }
+        setRunHistory((prev) => [
+          {
+            runId: event.runId ?? createRunId(),
+            completedAt: event.ts ?? new Date().toISOString(),
+            headline:
+              event.strategyPacket?.decisionLedger.headline
+              || event.winningOption?.title
+              || 'Council recommendation',
+            missionBrief: event.strategyPacket?.missionBrief ?? summarizeMissionBrief(missionBriefRef.current),
+            winningOptionTitle: event.winningOption?.title ?? 'No winning option returned',
+            judgeNarrative: event.strategyPacket?.judgeNarrative ?? [],
+          },
+          ...prev,
+        ].slice(0, 6))
         setMembers((prev) => prev.map((member) => ({
           ...member,
           status: 'done',
@@ -503,11 +705,26 @@ export default function CouncilDemoApp() {
         setSessionState('failed')
         setActiveStage(null)
         setLatestQuestion(null)
+        setDirectChatPendingByMemberId({})
         setSessionFeed((prev) => [`Run failed: ${event.message}`, ...prev].slice(0, 12))
       }
     })
     return () => unsubscribe()
   }, [activeConnection.wsUrl, connection])
+
+  useEffect(() => {
+    if (!directChatMemberId) return
+    if (members.some((member) => member.id === directChatMemberId)) return
+    setDirectChatMemberId(null)
+    setDirectChatDraft('')
+  }, [directChatMemberId, members])
+
+  useEffect(() => {
+    if (!directChatMemberId) return
+    const node = directChatScrollRef.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+  }, [directChatByMemberId, directChatMemberId, directChatPendingByMemberId])
 
   const stageItems = buildCouncilStageRail(COUNCIL_STAGE_ORDER, activeStage, completedStages)
   const missionLogEntries = buildMissionLogEntries(sessionFeed)
@@ -523,8 +740,22 @@ export default function CouncilDemoApp() {
     latestQuestion,
     lastSummary,
   })
+  const briefMissingFields = missionBriefMissingFields(missionBrief)
+  const briefReadiness = missionBriefReadiness(missionBrief)
+  const missionPromptPreview = buildMissionPrompt(missionBrief, form.prompt)
   const canRun = (transportState === 'connected' || transportState === 'mock') && sessionState !== 'running'
   const canCancel = (transportState === 'connected' || transportState === 'mock') && sessionState === 'running'
+  const activeDirectChatMember = useMemo(
+    () => members.find((member) => member.id === directChatMemberId) ?? null,
+    [directChatMemberId, members],
+  )
+  const activeDirectChatMessages = useMemo(
+    () => (directChatMemberId ? directChatByMemberId[directChatMemberId] ?? [] : []),
+    [directChatByMemberId, directChatMemberId],
+  )
+  const activeDirectChatPending = directChatMemberId
+    ? (directChatPendingByMemberId[directChatMemberId] ?? false)
+    : false
 
   function handleApplyConnection(): void {
     const normalized = normalizeForm(form)
@@ -533,15 +764,19 @@ export default function CouncilDemoApp() {
   }
 
   function handleStartRun(): void {
-    const rawPrompt = form.prompt.trim()
-    if (!rawPrompt) {
-      setTransportMessage('Enter a mission prompt before starting the council.')
+    if (briefMissingFields.length > 0) {
+      setTransportMessage(`Complete the mission brief: ${briefMissingFields.join(', ')}.`)
+      setSessionFeed((prev) => [
+        `Mission brief incomplete: ${briefMissingFields.join(', ')}.`,
+        ...prev,
+      ].slice(0, 12))
       return
     }
     if (!canRun) {
       setTransportMessage('Wait for the current run to finish or reconnect first.')
       return
     }
+    const rawPrompt = missionPromptPreview
     const content =
       nextAction === 'clarify' || nextAction === 'rerun'
         ? composeFollowUpPrompt(rawPrompt, latestQuestion, lastSummary)
@@ -572,6 +807,42 @@ export default function CouncilDemoApp() {
     if (nextAction === 'start_run' || nextAction === 'clarify' || nextAction === 'rerun') {
       handleStartRun()
     }
+  }
+
+  function openMemberDirectChat(memberId: string): void {
+    setSelectedMemberId(memberId)
+    setDirectChatMemberId(memberId)
+    setDirectChatDraft('')
+  }
+
+  function closeMemberDirectChat(): void {
+    setDirectChatMemberId(null)
+    setDirectChatDraft('')
+  }
+
+  function sendDirectChatMessage(): void {
+    const memberId = directChatMemberId
+    if (!memberId) return
+    const content = directChatDraft.trim()
+    if (!content) return
+
+    connection.send({
+      type: 'member.chat.send',
+      runId: activeRunId ?? undefined,
+      memberId,
+      content,
+    })
+
+    setDirectChatDraft('')
+    setDirectChatPendingByMemberId((prev) => ({
+      ...prev,
+      [memberId]: true,
+    }))
+  }
+
+  function handleSendDirectChatMessage(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault()
+    sendDirectChatMessage()
   }
 
   function bringWindowToFront(windowId: DemoWindowId): void {
@@ -674,18 +945,18 @@ export default function CouncilDemoApp() {
                 nextAction === 'connect'
                   ? transportState === 'connecting'
                   : nextAction === 'start_run' || nextAction === 'clarify' || nextAction === 'rerun'
-                    ? !canRun
+                    ? !canRun || briefMissingFields.length > 0
                     : false
               }
             />
             <CouncilLaunchCard
               title={nextAction === 'clarify' ? 'Clarify The Mission' : nextAction === 'rerun' ? 'Relaunch The Mission' : 'Launch A Council Run'}
-              description="Start with one strong brief, then keep the same launcher for clarification and reruns."
-              promptLabel="Mission Prompt"
+              description="Run the council from an executive brief, not a raw chat prompt."
+              promptLabel="Context Notes"
               promptValue={form.prompt}
               onPromptChange={(value) => setForm((prev) => ({ ...prev, prompt: value }))}
-              promptPlaceholder="Ask the council for a plan, critique, or decision."
-              helperText="Include the objective, success criteria, and any hard constraints you want the council to respect."
+              promptPlaceholder="Paste current status, dependencies, links, or extra context for the room."
+              helperText="The final council prompt is generated from the mission brief above plus these notes."
               primaryAction={{
                 label:
                   nextAction === 'clarify'
@@ -694,7 +965,7 @@ export default function CouncilDemoApp() {
                       ? 'Retry Mission'
                       : 'Start Run',
                 onClick: handleStartRun,
-                disabled: !canRun,
+                disabled: !canRun || briefMissingFields.length > 0,
               }}
               secondaryAction={{
                 label: 'Cancel Run',
@@ -722,6 +993,92 @@ export default function CouncilDemoApp() {
                     </div>
                   </div>
                   <p className="cometroom-window-message">{transportMessage}</p>
+                  <div className="cometroom-brief-meter">
+                    <div className="cometroom-brief-meter-head">
+                      <strong>Brief Readiness</strong>
+                      <span>{briefReadiness}%</span>
+                    </div>
+                    <div className="cometroom-brief-meter-track">
+                      <div className="cometroom-brief-meter-fill" style={{ width: `${briefReadiness}%` }} />
+                    </div>
+                  </div>
+                  <div className="cometroom-brief-grid">
+                    <label className="council-field">
+                      <span>Objective</span>
+                      <input
+                        value={missionBrief.objective}
+                        onChange={(event) =>
+                          setMissionBrief((prev) => ({ ...prev, objective: event.target.value }))
+                        }
+                        placeholder="What decision or outcome should the council optimize for?"
+                      />
+                    </label>
+                    <label className="council-field">
+                      <span>Success Metric</span>
+                      <input
+                        value={missionBrief.successMetric}
+                        onChange={(event) =>
+                          setMissionBrief((prev) => ({ ...prev, successMetric: event.target.value }))
+                        }
+                        placeholder="How will you know the room picked the right path?"
+                      />
+                    </label>
+                    <label className="council-field">
+                      <span>Decision Window</span>
+                      <input
+                        value={missionBrief.decisionWindow}
+                        onChange={(event) =>
+                          setMissionBrief((prev) => ({ ...prev, decisionWindow: event.target.value }))
+                        }
+                        placeholder="When does this have to pay off?"
+                      />
+                    </label>
+                    <label className="council-field">
+                      <span>Stakeholders</span>
+                      <input
+                        value={missionBrief.stakeholders}
+                        onChange={(event) =>
+                          setMissionBrief((prev) => ({ ...prev, stakeholders: event.target.value }))
+                        }
+                        placeholder="Who needs to buy into the decision?"
+                      />
+                    </label>
+                    <label className="council-field council-field-span-2">
+                      <span>Constraints</span>
+                      <textarea
+                        value={missionBrief.constraints}
+                        onChange={(event) =>
+                          setMissionBrief((prev) => ({ ...prev, constraints: event.target.value }))
+                        }
+                        placeholder="Scope, time, quality, platform, or execution constraints."
+                      />
+                    </label>
+                    <label className="council-field">
+                      <span>Risk Posture</span>
+                      <select
+                        value={missionBrief.riskPosture}
+                        onChange={(event) =>
+                          setMissionBrief((prev) => ({
+                            ...prev,
+                            riskPosture: event.target.value as MissionBriefDraft['riskPosture'],
+                          }))
+                        }
+                      >
+                        <option value="Low">Low</option>
+                        <option value="Balanced">Balanced</option>
+                        <option value="Bold">Bold</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="cometroom-brief-preview">
+                    <strong>Generated Council Brief</strong>
+                    <p>{missionPromptPreview}</p>
+                    <span>
+                      {briefMissingFields.length > 0
+                        ? `Missing: ${briefMissingFields.join(', ')}`
+                        : 'All required brief fields are ready.'}
+                    </span>
+                  </div>
                 </div>
               )}
               advancedContent={
@@ -774,6 +1131,10 @@ export default function CouncilDemoApp() {
             latestQuestion={latestQuestion}
             lastSummary={lastSummary}
             milestone={milestone}
+            members={members}
+            sessionState={sessionState}
+            timeline={stageTimeline}
+            briefReadiness={briefReadiness}
           />
         )
       case 'outcome':
@@ -781,6 +1142,9 @@ export default function CouncilDemoApp() {
           <CouncilOutcomePanel
             outcome={sessionOutcome}
             emptyText="The final synthesis, winning option, and references will appear here after the council completes a run."
+            activeStage={activeStage}
+            members={members}
+            runHistory={runHistory}
           />
         )
       case 'roster':
@@ -796,6 +1160,9 @@ export default function CouncilDemoApp() {
           <CouncilMissionLog
             entries={missionLogEntries}
             emptyText="Recent council events will appear here as the mission unfolds."
+            activeStage={activeStage}
+            members={members}
+            timeline={stageTimeline}
           />
         )
       default:
@@ -821,6 +1188,7 @@ export default function CouncilDemoApp() {
           zoom={form.roomZoom}
           selectedMemberId={selectedMemberId}
           onMemberSelect={setSelectedMemberId}
+          onMemberDoubleClick={openMemberDirectChat}
           showHeader={false}
           showSidebar={false}
         />
@@ -882,6 +1250,80 @@ export default function CouncilDemoApp() {
           )
         })}
       </div>
+
+      {directChatMemberId ? (
+        <div
+          className="cometroom-dm-overlay"
+          onClick={closeMemberDirectChat}
+        >
+          <section
+            className="cometroom-dm-window"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="cometroom-dm-header">
+              <div>
+                <strong>
+                  @{activeDirectChatMember?.displayName || directChatMemberId}
+                </strong>
+                <span>Direct council channel</span>
+              </div>
+              <button
+                type="button"
+                className="cometroom-dm-close"
+                onClick={closeMemberDirectChat}
+              >
+                Close
+              </button>
+            </header>
+
+            <div className="cometroom-dm-notice">
+              Only this member keeps the private context from this conversation.
+            </div>
+
+            <div className="cometroom-dm-messages" ref={directChatScrollRef}>
+              {activeDirectChatMessages.length === 0 ? (
+                <div className="cometroom-dm-empty">
+                  Start a private discussion to hear this member&apos;s perspective and influence their stance.
+                </div>
+              ) : null}
+              {activeDirectChatMessages.map((message) => (
+                <article
+                  key={message.id}
+                  className={`cometroom-dm-message is-${message.role}`}
+                >
+                  <p>{message.content}</p>
+                  <time>{formatChatTimestamp(message.ts)}</time>
+                </article>
+              ))}
+              {activeDirectChatPending ? (
+                <article className="cometroom-dm-message is-assistant is-typing">
+                  <p>Thinking...</p>
+                </article>
+              ) : null}
+            </div>
+
+            <form className="cometroom-dm-compose" onSubmit={handleSendDirectChatMessage}>
+              <textarea
+                value={directChatDraft}
+                onChange={(event) => setDirectChatDraft(event.target.value)}
+                placeholder="Message this member privately..."
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' || event.shiftKey) return
+                  event.preventDefault()
+                  if (!directChatDraft.trim()) return
+                  sendDirectChatMessage()
+                }}
+              />
+              <button
+                type="submit"
+                disabled={!directChatDraft.trim() || activeDirectChatPending}
+              >
+                Send
+              </button>
+            </form>
+          </section>
+        </div>
+      ) : null}
 
       <footer className="cometroom-window-dock">
         <span className="cometroom-dock-label">Windows</span>

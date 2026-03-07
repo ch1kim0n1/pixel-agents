@@ -53,6 +53,7 @@ export interface PixelCouncilRoomProps {
   className?: string
   selectedMemberId?: string | null
   onMemberSelect?: (memberId: string) => void
+  onMemberDoubleClick?: (memberId: string) => void
   showHeader?: boolean
   showSidebar?: boolean
 }
@@ -290,11 +291,17 @@ interface CouncilCanvasProps {
   officeState: OfficeState
   zoom: number
   onAgentClick: (agentId: number) => void
+  onAgentDoubleClick: (agentId: number) => void
 }
 
 const DEFAULT_COUNCIL_CANVAS_ZOOM = 3.5
 
-function CouncilRoomCanvas({ officeState, zoom, onAgentClick }: CouncilCanvasProps) {
+function CouncilRoomCanvas({
+  officeState,
+  zoom,
+  onAgentClick,
+  onAgentDoubleClick,
+}: CouncilCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const offsetRef = useRef({ x: 0, y: 0 })
@@ -377,11 +384,20 @@ function CouncilRoomCanvas({ officeState, zoom, onAgentClick }: CouncilCanvasPro
     onAgentClick(hitId)
   }, [officeState, onAgentClick, screenToWorld])
 
+  const handleDoubleClick = useCallback((event: React.MouseEvent) => {
+    const world = screenToWorld(event.clientX, event.clientY)
+    if (!world) return
+    const hitId = officeState.getCharacterAt(world.x, world.y)
+    if (hitId === null) return
+    onAgentDoubleClick(hitId)
+  }, [officeState, onAgentDoubleClick, screenToWorld])
+
   return (
     <div className="pixel-council-canvas" ref={containerRef}>
       <canvas
         ref={canvasRef}
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
       />
     </div>
   )
@@ -504,6 +520,7 @@ export function PixelCouncilRoom({
   className,
   selectedMemberId = null,
   onMemberSelect,
+  onMemberDoubleClick,
   showHeader = true,
   showSidebar = true,
 }: PixelCouncilRoomProps) {
@@ -649,6 +666,16 @@ export function PixelCouncilRoom({
         logEvent(`Session failed: ${event.message}`)
         break
       }
+      case 'member.chat.message': {
+        if (event.role === 'assistant') {
+          logEvent(`${event.memberId} shared private input`)
+        }
+        break
+      }
+      case 'member.chat.error': {
+        logEvent(`Private chat failed for ${event.memberId}: ${event.message}`)
+        break
+      }
       case 'heartbeat':
         break
       default:
@@ -680,6 +707,46 @@ export function PixelCouncilRoom({
     if (!memberId) return
     focusMember(memberId)
   }, [focusMember])
+
+  const walkChairmanToMember = useCallback((memberId: string) => {
+    const current = sceneRef.current
+    const office = current.officeState
+    const targetMember = current.memberById.get(memberId)
+    if (!targetMember) return
+
+    const chairmanMember = current.members.find((entry) => entry.member.role === 'chairman')
+      ?? current.members[0]
+    if (!chairmanMember || chairmanMember.member.id === targetMember.member.id) return
+
+    const targetCharacter = office.characters.get(targetMember.agentId)
+    if (!targetCharacter) return
+
+    const walkTargets = [
+      { col: targetCharacter.tileCol - 1, row: targetCharacter.tileRow },
+      { col: targetCharacter.tileCol + 1, row: targetCharacter.tileRow },
+      { col: targetCharacter.tileCol, row: targetCharacter.tileRow - 1 },
+      { col: targetCharacter.tileCol, row: targetCharacter.tileRow + 1 },
+      { col: targetCharacter.tileCol - 2, row: targetCharacter.tileRow },
+      { col: targetCharacter.tileCol + 2, row: targetCharacter.tileRow },
+      { col: targetCharacter.tileCol, row: targetCharacter.tileRow - 2 },
+      { col: targetCharacter.tileCol, row: targetCharacter.tileRow + 2 },
+    ]
+
+    for (const tile of walkTargets) {
+      if (office.walkToTile(chairmanMember.agentId, tile.col, tile.row)) {
+        return
+      }
+    }
+  }, [])
+
+  const handleAgentDoubleClick = useCallback((agentId: number) => {
+    const current = sceneRef.current
+    const memberId = current.agentToMemberId.get(agentId)
+    if (!memberId) return
+    focusMember(memberId)
+    walkChairmanToMember(memberId)
+    onMemberDoubleClick?.(memberId)
+  }, [focusMember, onMemberDoubleClick, walkChairmanToMember])
 
   useEffect(() => {
     if (!selectedMemberId) return
@@ -732,6 +799,7 @@ export function PixelCouncilRoom({
               officeState={scene.officeState}
               zoom={normalizedZoom}
               onAgentClick={handleAgentClick}
+              onAgentDoubleClick={handleAgentDoubleClick}
             />
             <MemberLabelsOverlay
               officeState={scene.officeState}

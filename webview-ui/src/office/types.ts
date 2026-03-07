@@ -177,6 +177,8 @@ export interface Character {
   isActive: boolean
   /** Assigned seat uid, or null if no seat */
   seatId: string | null
+  /** Keep an active character at a commanded tile instead of auto-returning to seat */
+  holdPosition: boolean
   /** Active speech bubble type, or null if none showing */
   bubbleType: 'permission' | 'waiting' | null
   /** Countdown timer for bubble (waiting: 2→0, permission: unused) */

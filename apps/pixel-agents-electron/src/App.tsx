@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type FormEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
@@ -77,6 +78,13 @@ interface WindowDragState {
   startY: number
   originX: number
   originY: number
+}
+
+interface DirectChatMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  ts: string
 }
 
 type TransportState = CouncilUxTransportState
@@ -165,6 +173,12 @@ function formatRunId(runId: string | null): string {
   if (!runId) return 'No active run'
   if (runId.length <= 18) return runId
   return `${runId.slice(0, 8)}...${runId.slice(-6)}`
+}
+
+function formatChatTimestamp(rawTs: string): string {
+  const parsed = new Date(rawTs)
+  if (Number.isNaN(parsed.valueOf())) return ''
+  return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
 function composeFollowUpPrompt(
@@ -273,6 +287,14 @@ export default function App() {
   const [windowLayout, setWindowLayout] = useState<CouncilWindowLayoutMap>(() =>
     loadWindowLayoutMap(),
   )
+  const [directChatMemberId, setDirectChatMemberId] = useState<string | null>(null)
+  const [directChatDraft, setDirectChatDraft] = useState('')
+  const [directChatByMemberId, setDirectChatByMemberId] = useState<Record<string, DirectChatMessage[]>>(
+    {},
+  )
+  const [directChatPendingByMemberId, setDirectChatPendingByMemberId] = useState<
+    Record<string, boolean>
+  >({})
 
   const runtimeRef = useRef<RuntimeCore | null>(null)
   const councilBridgeRef = useRef<CouncilBridge | null>(null)
@@ -284,6 +306,7 @@ export default function App() {
   const terminalFlushTimerRef = useRef<number | null>(null)
   const dragStateRef = useRef<WindowDragState | null>(null)
   const zCounterRef = useRef<number>(40)
+  const directChatScrollRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     activeTerminalIdRef.current = activeTerminalId
@@ -436,6 +459,10 @@ export default function App() {
     setHadWaiting(false)
     setHadError(false)
     setWasInterrupted(false)
+    setDirectChatMemberId(null)
+    setDirectChatDraft('')
+    setDirectChatByMemberId({})
+    setDirectChatPendingByMemberId({})
   }
 
   async function clearRuntimeSurface(): Promise<void> {
@@ -665,6 +692,42 @@ export default function App() {
           return
         }
 
+        if (event.type === 'member.chat.message') {
+          setDirectChatByMemberId((prev) => {
+            const existing = prev[event.memberId] ?? []
+            if (event.messageId && existing.some((entry) => entry.id === event.messageId)) {
+              return prev
+            }
+            const nextMessage: DirectChatMessage = {
+              id: event.messageId || `${event.memberId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              role: event.role,
+              content: event.content,
+              ts: event.ts || new Date().toISOString(),
+            }
+            return {
+              ...prev,
+              [event.memberId]: [...existing, nextMessage],
+            }
+          })
+          if (event.role === 'assistant' || event.role === 'system') {
+            setDirectChatPendingByMemberId((prev) => ({
+              ...prev,
+              [event.memberId]: false,
+            }))
+          }
+          return
+        }
+
+        if (event.type === 'member.chat.error') {
+          setDirectChatPendingByMemberId((prev) => ({
+            ...prev,
+            [event.memberId]: false,
+          }))
+          setTransportMessage(event.message)
+          appendFeed(`Private chat error (${displayNameFor(event.memberId)}): ${event.message}`)
+          return
+        }
+
         if (event.type === 'session.completed') {
           setSessionState('completed')
           setActiveStage(null)
@@ -677,6 +740,7 @@ export default function App() {
             options: event.options ?? [],
             references: event.references ?? [],
             optionRankings: event.optionRankings ?? [],
+            strategyPacket: event.strategyPacket ?? null,
           })
           appendFeed(
             event.winningOption
@@ -691,6 +755,7 @@ export default function App() {
           setSessionState('failed')
           setActiveStage(null)
           setLatestQuestion(null)
+          setDirectChatPendingByMemberId({})
           appendFeed(`Run failed: ${event.message}`)
         }
       })
@@ -722,6 +787,20 @@ export default function App() {
       setSelectedMemberId(null)
     }
   }, [agents, selectedMemberId])
+
+  useEffect(() => {
+    if (!directChatMemberId) return
+    if (memberDirectory[directChatMemberId]) return
+    setDirectChatMemberId(null)
+    setDirectChatDraft('')
+  }, [directChatMemberId, memberDirectory])
+
+  useEffect(() => {
+    if (!directChatMemberId) return
+    const node = directChatScrollRef.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+  }, [directChatByMemberId, directChatMemberId, directChatPendingByMemberId])
 
   const sortedAgents = useMemo(
     () => [...agents].sort((left, right) => {
@@ -775,6 +854,13 @@ export default function App() {
 
   const canStartRun = transportState === 'connected' && sessionState !== 'running'
   const canCancelRun = transportState === 'connected' && sessionState === 'running' && !!activeRunId
+  const activeDirectChatMember = directChatMemberId ? memberDirectory[directChatMemberId] : null
+  const activeDirectChatMessages = directChatMemberId
+    ? (directChatByMemberId[directChatMemberId] ?? [])
+    : []
+  const activeDirectChatPending = directChatMemberId
+    ? (directChatPendingByMemberId[directChatMemberId] ?? false)
+    : false
 
   function handleApplyConnection(): void {
     const normalized = normalizeForm(form)
@@ -823,6 +909,42 @@ export default function App() {
     if (agent.terminalId) {
       setActiveTerminalId(agent.terminalId)
     }
+  }
+
+  function openMemberDirectChat(memberId: string): void {
+    handleSelectMember(memberId)
+    setDirectChatMemberId(memberId)
+    setDirectChatDraft('')
+  }
+
+  function closeMemberDirectChat(): void {
+    setDirectChatMemberId(null)
+    setDirectChatDraft('')
+  }
+
+  function sendDirectChatMessage(): void {
+    const memberId = directChatMemberId
+    if (!memberId) return
+    const content = directChatDraft.trim()
+    if (!content) return
+
+    connection.send({
+      type: 'member.chat.send',
+      runId: activeRunId ?? undefined,
+      memberId,
+      content,
+    })
+
+    setDirectChatDraft('')
+    setDirectChatPendingByMemberId((prev) => ({
+      ...prev,
+      [memberId]: true,
+    }))
+  }
+
+  function handleSendDirectChatMessage(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault()
+    sendDirectChatMessage()
   }
 
   function handleSelectTerminal(terminalId: string): void {
@@ -1059,6 +1181,8 @@ export default function App() {
             latestQuestion={latestQuestion}
             lastSummary={lastSummary}
             milestone={milestone}
+            members={rosterEntries}
+            sessionState={sessionState}
           />
         )
       case 'outcome':
@@ -1066,6 +1190,8 @@ export default function App() {
           <CouncilOutcomePanel
             outcome={sessionOutcome}
             emptyText="Final synthesis, winning option, and references will appear here when the council finishes the mission."
+            activeStage={activeStage}
+            members={rosterEntries}
           />
         )
       case 'roster':
@@ -1081,6 +1207,8 @@ export default function App() {
           <CouncilMissionLog
             entries={missionLogEntries}
             emptyText="Live stage and member events will appear here once a mission starts."
+            activeStage={activeStage}
+            members={rosterEntries}
           />
         )
       case 'ops':
@@ -1132,6 +1260,7 @@ export default function App() {
           zoom={roomZoom}
           selectedMemberId={selectedMemberId}
           onMemberSelect={handleSelectMember}
+          onMemberDoubleClick={openMemberDirectChat}
           showHeader={false}
           showSidebar={false}
         />
@@ -1193,6 +1322,80 @@ export default function App() {
           )
         })}
       </div>
+
+      {directChatMemberId ? (
+        <div
+          className="electron-dm-overlay"
+          onClick={closeMemberDirectChat}
+        >
+          <section
+            className="electron-dm-window"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="electron-dm-header">
+              <div>
+                <strong>
+                  @{activeDirectChatMember?.displayName || directChatMemberId}
+                </strong>
+                <span>Direct council channel</span>
+              </div>
+              <button
+                type="button"
+                className="electron-dm-close"
+                onClick={closeMemberDirectChat}
+              >
+                Close
+              </button>
+            </header>
+
+            <div className="electron-dm-notice">
+              Only this member keeps the private context from this conversation.
+            </div>
+
+            <div className="electron-dm-messages" ref={directChatScrollRef}>
+              {activeDirectChatMessages.length === 0 ? (
+                <div className="electron-dm-empty">
+                  Start a private discussion to hear this member&apos;s perspective and influence their stance.
+                </div>
+              ) : null}
+              {activeDirectChatMessages.map((message) => (
+                <article
+                  key={message.id}
+                  className={`electron-dm-message is-${message.role}`}
+                >
+                  <p>{message.content}</p>
+                  <time>{formatChatTimestamp(message.ts)}</time>
+                </article>
+              ))}
+              {activeDirectChatPending ? (
+                <article className="electron-dm-message is-assistant is-typing">
+                  <p>Thinking...</p>
+                </article>
+              ) : null}
+            </div>
+
+            <form className="electron-dm-compose" onSubmit={handleSendDirectChatMessage}>
+              <textarea
+                value={directChatDraft}
+                onChange={(event) => setDirectChatDraft(event.target.value)}
+                placeholder="Message this member privately..."
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' || event.shiftKey) return
+                  event.preventDefault()
+                  if (!directChatDraft.trim()) return
+                  sendDirectChatMessage()
+                }}
+              />
+              <button
+                type="submit"
+                disabled={!directChatDraft.trim() || activeDirectChatPending}
+              >
+                Send
+              </button>
+            </form>
+          </section>
+        </div>
+      ) : null}
 
       <footer className="electron-window-dock">
         <span className="electron-dock-label">Windows</span>

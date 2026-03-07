@@ -70,6 +70,7 @@ export function createCharacter(
     wanderLimit: randomInt(WANDER_MOVES_BEFORE_REST_MIN, WANDER_MOVES_BEFORE_REST_MAX),
     isActive: true,
     seatId,
+    holdPosition: false,
     bubbleType: null,
     bubbleTimer: 0,
     seatTimer: 0,
@@ -120,6 +121,9 @@ export function updateCharacter(
       if (ch.seatTimer < 0) ch.seatTimer = 0 // clear turn-end sentinel
       // If became active, pathfind to seat
       if (ch.isActive) {
+        if (ch.holdPosition) {
+          break
+        }
         if (!ch.seatId) {
           // No seat assigned — type in place
           ch.state = CharacterState.TYPE
@@ -195,6 +199,12 @@ export function updateCharacter(
         ch.y = center.y
 
         if (ch.isActive) {
+          if (ch.holdPosition) {
+            ch.state = CharacterState.IDLE
+            ch.frame = 0
+            ch.frameTimer = 0
+            break
+          }
           if (!ch.seatId) {
             // No seat — type in place
             ch.state = CharacterState.TYPE
@@ -259,7 +269,7 @@ export function updateCharacter(
       }
 
       // If became active while wandering, repath to seat
-      if (ch.isActive && ch.seatId) {
+      if (ch.isActive && ch.seatId && !ch.holdPosition) {
         const seat = seats.get(ch.seatId)
         if (seat) {
           const lastStep = ch.path[ch.path.length - 1]
